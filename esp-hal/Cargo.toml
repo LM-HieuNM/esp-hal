@@ -15,6 +15,7 @@ features       = ["esp32c6"]
 rustdoc-args   = ["--cfg", "docsrs"]
 
 [dependencies]
+logger                   = { path = "../../logger" }
 bitflags                 = "2.6.0"
 bytemuck                 = "1.18.0"
 bitfield                 = "0.16.1"

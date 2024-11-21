@@ -77,7 +77,7 @@
 //!     .unwrap();
 //! # }
 //! ```
-//! 
+//!
 //! > Note: on ESP32 and ESP32-S2 you cannot specify a base frequency other than 80 MHz
 
 use core::marker::PhantomData;
@@ -93,6 +93,7 @@ use crate::{
     system::PeripheralClockControl,
     InterruptConfigurable,
 };
+use logger::{error, info, warn}; //HieuNM add 21/11
 
 /// Errors
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -476,6 +477,7 @@ where
             let ptr = (constants::RMT_RAM_START
                 + C::CHANNEL as usize * constants::RMT_CHANNEL_RAM_SIZE * 4
                 + ram_index * 4) as *mut u32;
+
             for (idx, entry) in self.data[self.index..]
                 .iter()
                 .take(constants::RMT_CHANNEL_RAM_SIZE / 2)
@@ -1043,6 +1045,7 @@ where
 {
     channel: C,
     data: &'a mut [T],
+    index: usize,
 }
 
 impl<'a, C, T: From<u32> + Copy> RxTransaction<'a, C, T>
@@ -1050,29 +1053,84 @@ where
     C: RxChannel,
 {
     /// Wait for the transaction to complete
-    pub fn wait(self) -> Result<C, (Error, C)> {
+    pub fn wait(mut self) -> Result<C, (Error, C)> {
+        //HieuNM add and modify to receive data longer
         loop {
             if <C as private::RxChannelInternal<crate::Blocking>>::is_error() {
+                <C as private::RxChannelInternal<crate::Blocking>>::stop();
                 return Err((Error::TransmissionError, self.channel));
             }
-
+            // done khi gặp IDLE_THRESSHOLD
             if <C as private::RxChannelInternal<crate::Blocking>>::is_done() {
+                logger::info!("HieuNM: is done");
+                <C as private::RxChannelInternal<crate::Blocking>>::stop();
+                // return Ok(self.channel);
                 break;
             }
-        }
 
+            if <C as private::RxChannelInternal<crate::Blocking>>::is_threshold_set() {
+                <C as private::RxChannelInternal<crate::Blocking>>::reset_rx_threshold_set();
+                logger::info!("HieuNM: is threshold set");
+                // <C as private::RxChannelInternal<crate::Blocking>>::stop();
+                break;
+            }
+
+            // wait for RX_THRESHOLD
+            // while !<C as private::RxChannelInternal<crate::Blocking>>::is_threshold_set() {
+            //     if <C as private::RxChannelInternal<crate::Blocking>>::is_error() {
+            //         <C as private::RxChannelInternal<crate::Blocking>>::stop();
+            //         return Err((Error::TransmissionError, self.channel));
+            //     }
+
+            //     // done khi gặp IDLE_THRESSHOLD
+            //     if <C as private::RxChannelInternal<crate::Blocking>>::is_done() {
+            //         <C as private::RxChannelInternal<crate::Blocking>>::stop();
+            //         logger::info!("HieuNM: is done");
+            //         return Ok(self.channel);
+            //         // break;
+            //     }
+            // }
+            // reset RX_THRESHOLD
+            // <C as private::RxChannelInternal<crate::Blocking>>::reset_rx_threshold_set();
+            // <C as private::RxChannelInternal<crate::Blocking>>::clear_interrupts();
+            // <C as private::RxChannelInternal<crate::Blocking>>::update();
+            // // Tính toán vị trí trong RAM để đọc dữ liệu
+            // let ram_index = ((self.index / (constants::RMT_CHANNEL_RAM_SIZE / 2)) % 2)
+            //     * (constants::RMT_CHANNEL_RAM_SIZE / 2);
+            // logger::warn!("HieuNM: ram_index: {}", ram_index);
+            // // Đọc dữ liệu từ RMT RAM
+            // let ptr = (constants::RMT_RAM_START
+            //     + C::CHANNEL as usize * constants::RMT_CHANNEL_RAM_SIZE * 4
+            //     + ram_index * 4) as *const u32;
+            // // Số lượng dữ liệu cần đọc trong lần này
+            // let chunk_size = core::cmp::min(
+            //     constants::RMT_CHANNEL_RAM_SIZE / 2,
+            //     self.data.len() - self.index,
+            // );
+            // // Copy dữ liệu từ RMT RAM vào buffer
+            // for (idx, entry) in self.data.iter_mut().take(chunk_size).enumerate() {
+            //     *entry = unsafe { ptr.add(idx).read_volatile().into() };
+            // }
+            // // Cập nhật index
+            // self.index += chunk_size;
+            // logger::warn!("HieuNM: index: {}", self.index);
+            // // Kiểm tra xem đã nhận đủ dữ liệu chưa? Nếu dữ liệu đã đầy trước khi gặp IDLE_THRESSHOLD thì dừng nhận dữ liệu
+            // if self.index >= self.data.len() {
+            //     logger::warn!("HieuNM: index >= data.len()");
+            //     return Ok(self.channel);
+            // }
+            //-------------------------------------------------------------
+        }
         <C as private::RxChannelInternal<crate::Blocking>>::stop();
         <C as private::RxChannelInternal<crate::Blocking>>::clear_interrupts();
         <C as private::RxChannelInternal<crate::Blocking>>::update();
-
         let ptr = (constants::RMT_RAM_START
             + C::CHANNEL as usize * constants::RMT_CHANNEL_RAM_SIZE * 4)
             as *mut u32;
-        let len = self.data.len();
+        let len = constants::RMT_CHANNEL_RAM_SIZE; //self.data.len();
         for (idx, entry) in self.data.iter_mut().take(len).enumerate() {
             *entry = unsafe { ptr.add(idx).read_volatile().into() };
         }
-
         Ok(self.channel)
     }
 }
@@ -1090,15 +1148,16 @@ pub trait RxChannel: private::RxChannelInternal<crate::Blocking> {
     where
         Self: Sized,
     {
-        if data.len() > constants::RMT_CHANNEL_RAM_SIZE {
-            return Err(Error::InvalidArgument);
-        }
+        // if data.len() > constants::RMT_CHANNEL_RAM_SIZE {
+        //     return Err(Error::InvalidArgument);
+        // }
 
         Self::start_receive_raw();
 
         Ok(RxTransaction {
             channel: self,
             data,
+            index: 0,
         })
     }
 }
@@ -1150,7 +1209,7 @@ pub mod asynch {
         fn poll(self: Pin<&mut Self>, ctx: &mut Context<'_>) -> Poll<Self::Output> {
             WAKER[T::CHANNEL as usize].register(ctx.waker());
 
-            if T::is_error() || T::is_done() {
+            if T::is_error() || T::is_done() || T::is_threshold_set() {
                 Poll::Ready(())
             } else {
                 Poll::Pending
@@ -1213,7 +1272,7 @@ pub mod asynch {
 
         fn poll(self: Pin<&mut Self>, ctx: &mut Context<'_>) -> Poll<Self::Output> {
             WAKER[T::CHANNEL as usize].register(ctx.waker());
-            if T::is_error() || T::is_done() {
+            if T::is_error() || T::is_done() || T::is_threshold_set() {
                 Poll::Ready(())
             } else {
                 Poll::Pending
@@ -1226,38 +1285,100 @@ pub mod asynch {
         /// Start receiving a pulse code sequence.
         /// The length of sequence cannot exceed the size of the allocated RMT
         /// RAM.
-        async fn receive<'a, T: From<u32> + Copy>(&mut self, data: &'a mut [T]) -> Result<(), Error>
+        async fn receive<'a, T: From<u32> + Copy>(
+            &mut self,
+            data: &'a mut [T],
+        ) -> Result<usize, Error>
         where
             Self: Sized,
         {
-            if data.len() > constants::RMT_CHANNEL_RAM_SIZE {
-                return Err(Error::InvalidArgument);
-            }
-
+            //HieuNM add and modify to receive data longer
+            let mut current_index = 0;
+            // if data.len() > constants::RMT_CHANNEL_RAM_SIZE {
+            //     return Err(Error::InvalidArgument);
+            // }
             Self::clear_interrupts();
             Self::listen_interrupt(super::private::Event::End);
             Self::listen_interrupt(super::private::Event::Error);
+            Self::listen_interrupt(super::private::Event::Threshold);
             Self::start_receive_raw();
+            loop {
+                RmtRxFuture::new(self).await;
 
-            RmtRxFuture::new(self).await;
+                if Self::is_error() {
+                    return Err(Error::TransmissionError);
+                } else if Self::is_threshold_set() {
+                    logger::info!("HieuNM: is threshold set");
+                    Self::stop();
+                    Self::clear_interrupts();
+                    Self::update();
 
-            if Self::is_error() {
-                Err(Error::TransmissionError)
-            } else {
-                Self::stop();
-                Self::clear_interrupts();
-                Self::update();
+                    // Tính toán vị trí trong RAM để đọc dữ liệu
+                    let ram_index = ((current_index / (constants::RMT_CHANNEL_RAM_SIZE / 2)) % 2)
+                        * (constants::RMT_CHANNEL_RAM_SIZE / 2);
 
-                let ptr = (constants::RMT_RAM_START
-                    + Self::CHANNEL as usize * constants::RMT_CHANNEL_RAM_SIZE * 4)
-                    as *mut u32;
-                let len = data.len();
-                for (idx, entry) in data.iter_mut().take(len).enumerate() {
-                    *entry = unsafe { ptr.add(idx).read_volatile().into() };
+                    // Đọc dữ liệu từ RMT RAM
+                    let ptr = (constants::RMT_RAM_START
+                        + Self::CHANNEL as usize * constants::RMT_CHANNEL_RAM_SIZE * 4
+                        + ram_index * 4) as *const u32;
+
+                    // Số lượng dữ liệu cần đọc trong lần này
+                    let chunk_size = core::cmp::min(
+                        constants::RMT_CHANNEL_RAM_SIZE / 2,
+                        data.len() - current_index,
+                    );
+
+                    // Copy dữ liệu từ RMT RAM vào buffer
+                    for (idx, entry) in data.iter_mut().take(chunk_size).enumerate() {
+                        *entry = unsafe { ptr.add(idx).read_volatile().into() };
+                    }
+
+                    // Cập nhật index
+                    current_index += chunk_size;
+                    logger::warn!("HieuNM: index: {}", current_index);
+
+                    // Kiểm tra xem đã nhận đủ dữ liệu chưa? Nếu dữ liệu đã đầy trước khi gặp IDLE_THRESSHOLD thì dừng nhận dữ liệu
+                    if current_index >= data.len() {
+                        logger::warn!("HieuNM: index >= data.len()");
+                        break;
+                    }
+                } else {
+                    logger::info!("HieuNM: is done");
+                    Self::stop();
+                    Self::clear_interrupts();
+                    Self::update();
+
+                    // Tính toán vị trí trong RAM để đọc dữ liệu
+                    let ram_index = ((current_index / (constants::RMT_CHANNEL_RAM_SIZE / 2)) % 2)
+                        * (constants::RMT_CHANNEL_RAM_SIZE / 2);
+                    let ptr = (constants::RMT_RAM_START
+                        + Self::CHANNEL as usize * constants::RMT_CHANNEL_RAM_SIZE * 4
+                        + ram_index * 4) as *const u32;
+
+                    // Đọc dữ liệu từ RMT RAM
+                    let ptr = (constants::RMT_RAM_START
+                        + Self::CHANNEL as usize * constants::RMT_CHANNEL_RAM_SIZE * 4
+                        + ram_index * 4) as *const u32;
+
+                    // Số lượng dữ liệu cần đọc trong lần này
+                    let chunk_size = core::cmp::min(
+                        constants::RMT_CHANNEL_RAM_SIZE / 2,
+                        data.len() - current_index,
+                    );
+
+                    // Copy dữ liệu từ RMT RAM vào buffer
+                    for (idx, entry) in data.iter_mut().take(chunk_size).enumerate() {
+                        *entry = unsafe { ptr.add(idx).read_volatile().into() };
+                    }
+
+                    // Cập nhật index
+                    current_index += chunk_size;
+                    logger::warn!("HieuNM: index: {}", current_index);
+
+                    break;
                 }
-
-                Ok(())
             }
+            Ok(current_index)
         }
     }
 
@@ -1279,10 +1400,12 @@ pub mod asynch {
                 2 => {
                     super::Channel::<crate::Async, 2>::unlisten_interrupt(Event::End);
                     super::Channel::<crate::Async, 2>::unlisten_interrupt(Event::Error);
+                    super::Channel::<crate::Async, 2>::unlisten_interrupt(Event::Threshold);
                 }
                 3 => {
                     super::Channel::<crate::Async, 3>::unlisten_interrupt(Event::End);
                     super::Channel::<crate::Async, 3>::unlisten_interrupt(Event::Error);
+                    super::Channel::<crate::Async, 3>::unlisten_interrupt(Event::Threshold);
                 }
 
                 #[cfg(any(esp32, esp32s3))]
@@ -1571,10 +1694,28 @@ mod private {
 
         fn is_error() -> bool;
 
+        fn is_threshold_set() -> bool; //HieuNM add 21/11
+
         fn start_receive_raw() {
+            // 1. Clear RAM data
+            let ram_start = (constants::RMT_RAM_START
+                + Self::CHANNEL as usize * constants::RMT_CHANNEL_RAM_SIZE * 4)
+                as *mut u32;
+
+            // 2. Clear toàn bộ RAM của channel này
+            for i in 0..constants::RMT_CHANNEL_RAM_SIZE {
+                unsafe {
+                    ram_start.add(i).write_volatile(0);
+                }
+            }
+
             Self::clear_interrupts();
+            Self::set_threshold((constants::RMT_CHANNEL_RAM_SIZE) as u8);
+            Self::update();
             Self::set_wrap_mode(false);
+            Self::update();
             Self::set_memsize(1);
+            Self::update();
             Self::start_rx();
             Self::update();
         }
@@ -1594,6 +1735,10 @@ mod private {
         fn unlisten_interrupt(event: Event) {
             Self::enable_listen_interrupt(event, false);
         }
+
+        fn set_threshold(threshold: u8); //HieuNM add 21/11
+
+        fn reset_rx_threshold_set(); //HieuNM add 21/11
     }
 }
 
@@ -1640,13 +1785,13 @@ mod chip_specific {
         let rmt = unsafe { &*crate::peripherals::RMT::PTR };
         let st = rmt.int_st().read();
 
-        if st.ch0_tx_end().bit() || st.ch0_tx_err().bit() {
+        if st.ch0_tx_end().bit() || st.ch0_tx_err().bit() || st.ch0_tx_thr_event().bit() {
             Some(0)
-        } else if st.ch1_tx_end().bit() || st.ch1_tx_err().bit() {
+        } else if st.ch1_tx_end().bit() || st.ch1_tx_err().bit() || st.ch1_tx_thr_event().bit() {
             Some(1)
-        } else if st.ch2_rx_end().bit() || st.ch2_rx_err().bit() {
+        } else if st.ch2_rx_end().bit() || st.ch2_rx_err().bit() || st.ch2_rx_thr_event().bit() {
             Some(2)
-        } else if st.ch3_rx_end().bit() || st.ch3_rx_err().bit() {
+        } else if st.ch3_rx_end().bit() || st.ch3_rx_err().bit() || st.ch3_rx_thr_event().bit() {
             Some(3)
         } else {
             None
@@ -1928,6 +2073,12 @@ mod chip_specific {
                         rmt.[< ch $ch_num _rx_conf1 >]().modify(|_, w| w.rx_en().clear_bit());
                     }
 
+                    // HieuNM add 21/11/2024
+                    fn is_threshold_set() -> bool {
+                        let rmt = unsafe { &*crate::peripherals::RMT::PTR };
+                        rmt.int_raw().read().[< ch $ch_num _rx_thr_event >]().bit()
+                    }
+
                     fn set_filter_threshold(value: u8) {
                         let rmt = unsafe { &*crate::peripherals::RMT::PTR };
 
@@ -1960,6 +2111,19 @@ mod chip_specific {
                             w
                         });
                     }
+
+                    // HieuNM add 21/11/2024
+                    fn reset_rx_threshold_set() {
+                        let rmt = unsafe { &*crate::peripherals::RMT::PTR };
+                        rmt.int_clr()
+                            .write(|w| w.[< ch $ch_num _rx_thr_event >]().set_bit());
+                    }
+                    // HieuNM add 21/11/2024
+                    fn set_threshold(threshold: u8) {
+                        let rmt = unsafe { &*crate::peripherals::RMT::PTR };
+                        rmt.ch2_rx_lim().modify(|_, w| unsafe { w.rx_lim().bits(threshold as u16) });
+                    }
+
                 }
             }
         }
