@@ -117,6 +117,7 @@ pub enum Error {
 pub struct PulseCode {
     /// Logical output level in the first pulse code interval
     pub level1: bool,
+
     /// Length of the first pulse code interval (in clock cycles)
     pub length1: u16,
     /// Logical output level in the second pulse code interval
@@ -1197,6 +1198,12 @@ pub mod asynch {
                     if index >= data.len() {
                         break;
                     }
+
+                    // Tính toán số lượng data còn lại
+                    let remaining_data = data.len() - index;
+                    let chunk_size =
+                        core::cmp::min(constants::RMT_CHANNEL_RAM_SIZE / 2, remaining_data);
+
                     // re-fill TX RAM
                     let ram_index = (((index - constants::RMT_CHANNEL_RAM_SIZE)
                         / (constants::RMT_CHANNEL_RAM_SIZE / 2))
@@ -1207,21 +1214,20 @@ pub mod asynch {
                         + Self::CHANNEL as usize * constants::RMT_CHANNEL_RAM_SIZE * 4
                         + ram_index * 4) as *mut u32;
 
-                    for (idx, entry) in data[index..]
-                        .iter()
-                        .take(constants::RMT_CHANNEL_RAM_SIZE / 2)
-                        .enumerate()
-                    {
+                    for (idx, entry) in data[index..].iter().take(chunk_size).enumerate() {
                         unsafe {
                             ptr.add(idx + ram_index).write_volatile((*entry).into());
                         }
                     }
 
-                    index += constants::RMT_CHANNEL_RAM_SIZE / 2;
+                    index += chunk_size;
                 } else {
                     break;
                 }
             }
+            Self::stop();
+            Self::clear_interrupts();
+            Self::update();
             if Self::is_error() {
                 Err(Error::TransmissionError)
             } else {
@@ -1304,16 +1310,6 @@ pub mod asynch {
                         + Self::CHANNEL as usize * constants::RMT_CHANNEL_RAM_SIZE * 4
                         + ram_index * 4) as *const u32;
 
-                    {
-                        let ram_start = (constants::RMT_RAM_START
-                            + Self::CHANNEL as usize * constants::RMT_CHANNEL_RAM_SIZE * 4)
-                            as *const u32;
-                        for i in 0..constants::RMT_CHANNEL_RAM_SIZE {
-                            let value = unsafe { ram_start.add(i).read_volatile() };
-                            // Decode value thành PulseCode để dễ đọc
-                            let pulse: PulseCode = value.into();
-                        }
-                    }
                     let chunk_size = core::cmp::min(
                         constants::RMT_CHANNEL_RAM_SIZE / 2,
                         data.len() - current_index,
@@ -1340,9 +1336,6 @@ pub mod asynch {
 
                     let ram_index = ((current_index / (constants::RMT_CHANNEL_RAM_SIZE / 2)) % 2)
                         * (constants::RMT_CHANNEL_RAM_SIZE / 2);
-                    let ptr = (constants::RMT_RAM_START
-                        + Self::CHANNEL as usize * constants::RMT_CHANNEL_RAM_SIZE * 4
-                        + ram_index * 4) as *const u32;
 
                     let ptr = (constants::RMT_RAM_START
                         + Self::CHANNEL as usize * constants::RMT_CHANNEL_RAM_SIZE * 4

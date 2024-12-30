@@ -14,13 +14,7 @@ use esp_hal::{
     delay::Delay,
     prelude::*,
     timer::systimer::{
-        Alarm,
-        FrozenUnit,
-        Periodic,
-        SpecificComparator,
-        SpecificUnit,
-        SystemTimer,
-        Target,
+        Alarm, FrozenUnit, Periodic, SpecificComparator, SpecificUnit, SystemTimer, Target,
     },
     Blocking,
 };
