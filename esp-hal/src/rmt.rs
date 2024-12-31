@@ -1183,7 +1183,7 @@ pub mod asynch {
             Self::listen_interrupt(super::private::Event::Error);
             Self::listen_interrupt(super::private::Event::Threshold);
 
-            let mut index = Self::send_raw(data, false, 0);
+            let mut index = Self::send_raw(data, true, 0);
             loop {
                 Self::listen_interrupt(super::private::Event::End);
                 Self::listen_interrupt(super::private::Event::Error);
@@ -1196,6 +1196,9 @@ pub mod asynch {
                     Self::clear_interrupts();
                     Self::update();
                     if index >= data.len() {
+                        Self::set_continuous(false);
+                        Self::set_wrap_mode(false);
+                        Self::update();
                         break;
                     }
 
@@ -1225,9 +1228,6 @@ pub mod asynch {
                     break;
                 }
             }
-            Self::stop();
-            Self::clear_interrupts();
-            Self::update();
             if Self::is_error() {
                 Err(Error::TransmissionError)
             } else {
