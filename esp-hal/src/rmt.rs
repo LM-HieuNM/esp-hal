@@ -1183,7 +1183,7 @@ pub mod asynch {
             Self::listen_interrupt(super::private::Event::Error);
             Self::listen_interrupt(super::private::Event::Threshold);
 
-            let mut index = Self::send_raw(data, true, 0);
+            let mut index = Self::send_raw(data, false, 0);
             loop {
                 Self::listen_interrupt(super::private::Event::End);
                 Self::listen_interrupt(super::private::Event::Error);
