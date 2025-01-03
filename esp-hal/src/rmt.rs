@@ -1196,8 +1196,14 @@ pub mod asynch {
                     Self::clear_interrupts();
                     Self::update();
                     if index >= data.len() {
-                        Self::set_continuous(false);
-                        Self::set_wrap_mode(false);
+                        Self::listen_interrupt(super::private::Event::End);
+                        Self::listen_interrupt(super::private::Event::Error);
+                        Self::listen_interrupt(super::private::Event::Threshold);
+                        Self::update();
+                        RmtTxFuture::new(self).await;
+
+                        Self::stop();
+                        Self::clear_interrupts();
                         Self::update();
                         break;
                     }
@@ -1206,7 +1212,6 @@ pub mod asynch {
                     let remaining_data = data.len() - index;
                     let chunk_size =
                         core::cmp::min(constants::RMT_CHANNEL_RAM_SIZE / 2, remaining_data);
-
                     // re-fill TX RAM
                     let ram_index = (((index - constants::RMT_CHANNEL_RAM_SIZE)
                         / (constants::RMT_CHANNEL_RAM_SIZE / 2))
@@ -1219,12 +1224,14 @@ pub mod asynch {
 
                     for (idx, entry) in data[index..].iter().take(chunk_size).enumerate() {
                         unsafe {
-                            ptr.add(idx + ram_index).write_volatile((*entry).into());
+                            ptr.add(idx).write_volatile((*entry).into());
                         }
                     }
-
                     index += chunk_size;
                 } else {
+                    Self::stop();
+                    Self::clear_interrupts();
+                    Self::update();
                     break;
                 }
             }
